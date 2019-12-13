@@ -1,0 +1,153 @@
+apiVersion: {{ template "wordpress.deployment.apiVersion" . }}
+kind: Deployment
+metadata:
+  name: {{ template "wordpress.fullname" . }}
+  labels:
+    app: "{{ template "wordpress.fullname" . }}"
+    chart: "{{ template "wordpress.chart" . }}"
+    release: {{ .Release.Name | quote }}
+    heritage: {{ .Release.Service | quote }}
+spec:
+  selector:
+    matchLabels:
+      app: "{{ template "wordpress.fullname" . }}"
+      release: {{ .Release.Name | quote }}
+  {{- if .Values.updateStrategy }}
+  strategy: {{ toYaml .Values.updateStrategy | nindent 4 }}
+  {{- end }}
+  replicas: {{ .Values.replicaCount }}
+  template:
+    metadata:
+      labels:
+        app: "{{ template "wordpress.fullname" . }}"
+        chart: "{{ template "wordpress.chart" . }}"
+        release: {{ .Release.Name | quote }}
+{{- if .Values.podAnnotations }}
+      annotations:
+{{- if .Values.podAnnotations }}
+{{ toYaml .Values.podAnnotations | indent 8 }}
+{{- end }}
+{{- end }}
+    spec:
+      {{- if .Values.schedulerName }}
+      schedulerName: "{{ .Values.schedulerName }}"
+      {{- end }}
+      hostAliases:
+      - ip: "127.0.0.1"
+        hostnames:
+        - "status.localhost"
+      # initContainers:
+      #   - name: take-volume-ownership
+      #     image: busybox:1.28
+      #     command: ["chown", "-R", "1000:1", "/bitnami/wordpress"]
+      #     volumeMounts:
+      #     - name: wordpress-data
+      #       mountPath: /bitnami/wordpress
+      #   - name: set-volume-permissions
+      #     image: busybox:1.28
+      #     command: ["chmod", "-R", "755", "/bitnami/wordpress"]
+      #     volumeMounts:
+      #     - name: wordpress-data
+      #       mountPath: /bitnami/wordpress
+      #   - name: set-volume-gid
+      #     image: busybox:1.28
+      #     command: ["chmod", "g+s", "/bitnami/wordpress"]
+      #     volumeMounts:
+      #     - name: wordpress-data
+      #       mountPath: /bitnami/wordpress
+      containers:
+      - name: wordpress
+        image: {{ template "wordpress.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+        env:
+        - name: WORDPRESS_DB_NAME
+          value: {{ .Values.database.name | quote }}
+        - name: WORDPRESS_DB_HOST
+          value: {{ .Values.database.host | quote }}
+        - name: WORDPRESS_DB_USER
+          value: {{ .Values.database.user | quote }}
+        - name: WORDPRESS_TABLE_PREFIX
+          value: {{ .Values.database.wordpressTablePrefix | quote }}
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ printf "%s-%s" .Release.Name "externaldb" }}
+              key: db-password
+        {{- with .Values.extraEnv }}
+{{ toYaml . | indent 8 }}
+        {{- end }}
+        - name: WORDPRESS_CONFIG_EXTRA
+          value: |
+            @ini_set( 'upload_max_size' , '40M' );
+            @ini_set( 'post_max_size', '20M');
+            @ini_set( 'memory_limit', '15M' );
+        ports:
+        - name: http
+          containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /wp-login.php
+            port: {{ ternary "https" "http" .Values.healthcheckHttps }}
+            {{- if .Values.healthcheckHttps }}
+            scheme: HTTPS
+            {{- end }}
+          {{- if .Values.livenessProbeHeaders }}
+            httpHeaders:
+{{ toYaml .Values.livenessProbeHeaders | indent 14 }}
+          {{- end }}
+{{ toYaml .Values.livenessProbe | indent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /wp-login.php
+            port: {{ ternary "https" "http" .Values.healthcheckHttps }}
+            {{- if .Values.healthcheckHttps }}
+            scheme: HTTPS
+            {{- end }}
+          {{- if .Values.readinessProbeHeaders }}
+            httpHeaders:
+{{ toYaml .Values.readinessProbeHeaders | indent 14 }}
+          {{- end }}
+{{ toYaml .Values.readinessProbe | indent 10 }}
+        volumeMounts:
+        - mountPath: /var/www/html
+          name: wordpress-data
+        {{- if and .Values.allowOverrideNone .Values.customHTAccessCM }}
+        - mountPath: /htaccess
+          name: custom-htaccess
+        {{- end }}
+        resources:
+{{ toYaml .Values.resources | indent 10 }}
+{{- if .Values.sidecars }}
+{{ toYaml .Values.sidecars | indent 6 }}
+{{- end }}
+      volumes:
+      {{- if and .Values.allowOverrideNone .Values.customHTAccessCM }}
+      - name: custom-htaccess
+        configMap:
+          name: {{ template "wordpress.customHTAccessCM" . }}
+          items:
+            - key: wordpress-htaccess.conf
+              path: wordpress-htaccess.conf
+      {{- end }}
+      - name: wordpress-data
+      {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.existingClaim | default (include "wordpress.fullname" .) }}
+      {{- else }}
+        emptyDir: {}
+      {{ end }}
+      {{- with .Values.extraVolumes }}
+{{ toYaml . | indent 6 }}
+      {{- end }}
+    {{- if .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+      {{- end -}}
+    {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
